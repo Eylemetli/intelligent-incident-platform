@@ -14,10 +14,10 @@ export class OrdersService {
         private readonly orderRepository: Repository<Order>,
     ) { }
 
-    async create(dto: CreateOrderDto): Promise<Order> {
+    async create(dto: CreateOrderDto, userId: string): Promise<Order> {
         //Kaydedilecek Order nesnesini hazırlıyoruz.
         const order = this.orderRepository.create({
-            userId: dto.userId,
+            userId: userId,
             orderNumber: `ORD-${randomUUID()}`,//Benzersiz sipariş numarası oluşturuyoruz.
             totalAmount: dto.totalAmount.toFixed(2),
             currency: dto.currency?.toUpperCase() ?? 'TRY',
@@ -27,17 +27,22 @@ export class OrdersService {
         return this.orderRepository.save(order);
     }
 
-    async findAll(): Promise<Order[]> {
+
+    async findAll(userId: string): Promise<Order[]> {
         return this.orderRepository.find({
+            where: { userId },
             order: {
                 createdAt: 'DESC',
             },
         });
     }
 
-    async findOne(id: string): Promise<Order> {
+    async findOne(id: string, userId: string): Promise<Order> {
         const order = await this.orderRepository.findOne({
-            where: { id },
+            where: {
+                id,
+                userId,
+            },
         });
 
         if (!order) {
@@ -46,5 +51,6 @@ export class OrdersService {
 
         return order;
     }
+
 
 }

@@ -1,6 +1,4 @@
-
 import {
-    IsUUID,
     IsNumber,
     IsPositive,
     IsOptional,
@@ -10,9 +8,6 @@ import {
 } from 'class-validator';
 
 export class CreateOrderDto {
-    @IsUUID()
-    userId: string;
-
     @IsNumber({ maxDecimalPlaces: 2 })
     @IsPositive()
     @Max(9999999999.99)

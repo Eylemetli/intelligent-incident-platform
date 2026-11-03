@@ -1,4 +1,3 @@
-
 import {
     Body,
     Controller,
@@ -6,29 +5,42 @@ import {
     Param,
     ParseUUIDPipe,
     Post,
+    Req,
+    UseGuards,
 } from '@nestjs/common';
 
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { AuthenticatedRequest } from '../auth/interfaces/authenticated-request.interface';
 
 @Controller('orders')
+@UseGuards(JwtAuthGuard)
 export class OrdersController {
     constructor(
         private readonly ordersService: OrdersService,
     ) { }
 
+
     @Post()
-    create(@Body() dto: CreateOrderDto) {
-        return this.ordersService.create(dto);
+    create(
+        @Body() dto: CreateOrderDto,
+        @Req() request: AuthenticatedRequest,
+    ) {
+        return this.ordersService.create(dto, request.user!.sub);
     }
 
+
     @Get()
-    findAll() {
-        return this.ordersService.findAll();
+    findAll(@Req() request: AuthenticatedRequest) {
+        return this.ordersService.findAll(request.user!.sub);
     }
 
     @Get(':id')
-    findOne(@Param('id', ParseUUIDPipe) id: string) {
-        return this.ordersService.findOne(id);
+    findOne(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Req() request: AuthenticatedRequest,
+    ) {
+        return this.ordersService.findOne(id, request.user!.sub);
     }
 }
