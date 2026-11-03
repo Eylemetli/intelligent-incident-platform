@@ -1,5 +1,5 @@
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
@@ -26,4 +26,25 @@ export class OrdersService {
         //save ile Siparişi PostgreSQL'e kaydediyoruz.
         return this.orderRepository.save(order);
     }
+
+    async findAll(): Promise<Order[]> {
+        return this.orderRepository.find({
+            order: {
+                createdAt: 'DESC',
+            },
+        });
+    }
+
+    async findOne(id: string): Promise<Order> {
+        const order = await this.orderRepository.findOne({
+            where: { id },
+        });
+
+        if (!order) {
+            throw new NotFoundException('Sipariş bulunamadı');
+        }
+
+        return order;
+    }
+
 }
