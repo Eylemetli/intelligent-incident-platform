@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 describe('PaymentsController', () => {
   let controller: PaymentsController;
@@ -10,6 +11,8 @@ describe('PaymentsController', () => {
   };
 
   beforeEach(async () => {
+    jest.clearAllMocks();
+
     const module: TestingModule =
       await Test.createTestingModule({
         controllers: [PaymentsController],
@@ -19,7 +22,12 @@ describe('PaymentsController', () => {
             useValue: mockPaymentsService,
           },
         ],
-      }).compile();
+      })
+        .overrideGuard(JwtAuthGuard)
+        .useValue({
+          canActivate: jest.fn().mockReturnValue(true),
+        })
+        .compile();
 
     controller = module.get<PaymentsController>(
       PaymentsController,

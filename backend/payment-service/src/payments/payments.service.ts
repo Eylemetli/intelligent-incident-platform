@@ -11,10 +11,13 @@ export class PaymentsService {
         private readonly paymentRepository: Repository<Payment>,
     ) { }
 
-    async create(dto: CreatePaymentDto): Promise<Payment> {
+    async create(
+        dto: CreatePaymentDto,
+        userId: string,
+    ): Promise<Payment> {
         const payment = this.paymentRepository.create({
             orderId: dto.orderId,
-            userId: dto.userId,
+            userId,
             amount: dto.amount.toFixed(2),
             currency: dto.currency?.toUpperCase() ?? 'TRY',
             status: PaymentStatus.PENDING,

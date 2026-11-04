@@ -12,9 +12,6 @@ export class CreatePaymentDto {
     @IsUUID()
     orderId: string;
 
-    @IsUUID()
-    userId: string;
-
     @IsNumber({ maxDecimalPlaces: 2 })
     @IsPositive()
     @Max(9999999999.99)
