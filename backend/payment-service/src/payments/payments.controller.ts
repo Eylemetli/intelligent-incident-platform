@@ -22,9 +22,12 @@ export class PaymentsController {
         @Body() dto: CreatePaymentDto,
         @Req() request: AuthenticatedRequest,
     ) {
+        const token = request.headers.authorization!.split(' ')[1];
+
         return this.paymentsService.create(
             dto,
             request.user!.sub,
+            token,
         );
     }
 }
