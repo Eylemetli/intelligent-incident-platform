@@ -6,9 +6,11 @@ import {
     ParseUUIDPipe,
     Post,
     Req,
+    Patch,
     UseGuards,
 } from '@nestjs/common';
-
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -43,4 +45,24 @@ export class OrdersController {
     ) {
         return this.ordersService.findOne(id, request.user!.sub);
     }
+
+    @Patch(':id/cancel')
+    cancel(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Req() request: AuthenticatedRequest,
+    ) {
+        return this.ordersService.cancel(id, request.user!.sub);
+    }
+    //endpoint hem JWT doğrulamasından hem de rol kontrolünden geçer.
+    @Patch(':id/confirm')
+    @UseGuards(RolesGuard)
+    @Roles('admin', 'manager')
+    confirm(
+        @Param('id', ParseUUIDPipe) id: string,
+        @Req() request: AuthenticatedRequest,
+    ) {
+        return this.ordersService.confirm(id, request.user!.sub);
+    }
+
+
 }

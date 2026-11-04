@@ -1,5 +1,5 @@
 
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
@@ -50,6 +50,55 @@ export class OrdersService {
         }
 
         return order;
+    }
+
+    async cancel(id: string, userId: string): Promise<Order> {
+        const order = await this.orderRepository.findOne({
+            where: {
+                id,
+                userId,
+            },
+        });
+
+        if (!order) {
+            throw new NotFoundException('Sipariş bulunamadı');
+        }
+
+        if (
+            order.status !== OrderStatus.PENDING &&
+            order.status !== OrderStatus.CONFIRMED
+        ) {
+            throw new ConflictException(
+                'Bu durumdaki sipariş iptal edilemez',
+            );
+        }
+
+        order.status = OrderStatus.CANCELLED;
+
+        return this.orderRepository.save(order);
+    }
+    //Bu metot siparişin hem kullanıcıya ait olduğunu hem de pending durumunda bulunduğunu kontrol ediyor.
+    async confirm(id: string, userId: string): Promise<Order> {
+        const order = await this.orderRepository.findOne({
+            where: {
+                id,
+                userId,
+            },
+        });
+
+        if (!order) {
+            throw new NotFoundException('Sipariş bulunamadı');
+        }
+
+        if (order.status !== OrderStatus.PENDING) {
+            throw new ConflictException(
+                'Yalnızca bekleyen siparişler onaylanabilir',
+            );
+        }
+
+        order.status = OrderStatus.CONFIRMED;
+
+        return this.orderRepository.save(order);
     }
 
 
