@@ -16,6 +16,10 @@ import { QueryFailedError, Repository } from 'typeorm';
 import { Payment, PaymentStatus } from './entities/payment.entity';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { OrderResponse } from './interfaces/order-response.interface';
+import {
+    ProcessPaymentDto,
+    PaymentProcessResult,
+} from './dto/process-payment.dto';
 
 @Injectable()
 export class PaymentsService {
@@ -167,5 +171,64 @@ export class PaymentsService {
                 'Order Service ile iletişim kurulamadı',
             );
         }
+    }
+    async process(
+        paymentId: string,
+        userId: string,
+        dto: ProcessPaymentDto,
+    ): Promise<Payment> {
+        const status =
+            dto.result === PaymentProcessResult.SUCCESS
+                ? PaymentStatus.SUCCESS
+                : PaymentStatus.FAILED;
+
+        const failureReason =
+            status === PaymentStatus.FAILED
+                ? dto.failureReason!
+                : null;
+
+        const result = await this.paymentRepository
+            .createQueryBuilder()
+            .update(Payment)
+            .set({
+                status,
+                failureReason,
+            })
+            .where('id = :paymentId', { paymentId })
+            .andWhere('user_id = :userId', { userId })
+            .andWhere('status = :pending', {
+                pending: PaymentStatus.PENDING,
+            })
+            .execute();
+
+        if (result.affected === 1) {
+            const updatedPayment = await this.paymentRepository.findOne({
+                where: {
+                    id: paymentId,
+                    userId,
+                },
+            });
+
+            if (!updatedPayment) {
+                throw new NotFoundException('Ödeme bulunamadı');
+            }
+
+            return updatedPayment;
+        }
+
+        const existingPayment = await this.paymentRepository.findOne({
+            where: {
+                id: paymentId,
+                userId,
+            },
+        });
+
+        if (!existingPayment) {
+            throw new NotFoundException('Ödeme bulunamadı');
+        }
+
+        throw new ConflictException(
+            'Yalnızca bekleyen ödemeler işlenebilir',
+        );
     }
 }

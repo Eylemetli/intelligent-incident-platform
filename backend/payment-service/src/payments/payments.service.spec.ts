@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
+import { PaymentProcessResult } from './dto/process-payment.dto';
 import {
   BadRequestException,
   ConflictException,
@@ -46,10 +47,19 @@ describe('PaymentsService', () => {
     failureReason: null,
   };
 
+  const queryBuilder = {
+    update: jest.fn().mockReturnThis(),
+    set: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    execute: jest.fn(),
+  };
+
   const repository = {
     create: jest.fn(),
     save: jest.fn(),
     findOne: jest.fn(),
+    createQueryBuilder: jest.fn(() => queryBuilder),
   };
 
   const httpService = {
@@ -66,8 +76,17 @@ describe('PaymentsService', () => {
     );
   };
 
+
   beforeEach(async () => {
     jest.resetAllMocks();
+
+    repository.createQueryBuilder.mockReturnValue(queryBuilder);
+    repository.findOne.mockResolvedValue(null);
+
+    queryBuilder.update.mockReturnThis();
+    queryBuilder.set.mockReturnThis();
+    queryBuilder.where.mockReturnThis();
+    queryBuilder.andWhere.mockReturnThis();
 
     const module: TestingModule =
       await Test.createTestingModule({
@@ -215,5 +234,55 @@ describe('PaymentsService', () => {
     ).rejects.toThrow(ServiceUnavailableException);
 
     expect(repository.save).not.toHaveBeenCalled();
+  });
+  describe('process', () => {
+    const paymentId = '814a46a4-fc51-4edb-ad2a-234712bb6f02';
+
+    it('bekleyen ödemeyi başarılı sonuçlandırmalı', async () => {
+      const updatedPayment = {
+        ...payment,
+        id: paymentId,
+        status: PaymentStatus.SUCCESS,
+        failureReason: null,
+      };
+
+      queryBuilder.execute.mockResolvedValue({ affected: 1 });
+      repository.findOne.mockResolvedValue(updatedPayment);
+
+      const result = await service.process(paymentId, userId, {
+        result: PaymentProcessResult.SUCCESS,
+      });
+
+      expect(result.status).toBe(PaymentStatus.SUCCESS);
+      expect(queryBuilder.execute).toHaveBeenCalled();
+    });
+
+    it('zaten sonuçlandırılmış ödemeyi tekrar işlememeli', async () => {
+      queryBuilder.execute.mockResolvedValue({ affected: 0 });
+
+      repository.findOne.mockResolvedValue({
+        ...payment,
+        id: paymentId,
+        status: PaymentStatus.SUCCESS,
+      });
+
+      await expect(
+        service.process(paymentId, userId, {
+          result: PaymentProcessResult.FAILED,
+          failureReason: 'Test hatası',
+        }),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('başka kullanıcıya ait ödemeyi işlememeli', async () => {
+      queryBuilder.execute.mockResolvedValue({ affected: 0 });
+      repository.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.process(paymentId, userId, {
+          result: PaymentProcessResult.SUCCESS,
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
   });
 });
