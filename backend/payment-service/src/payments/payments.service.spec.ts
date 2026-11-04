@@ -49,6 +49,7 @@ describe('PaymentsService', () => {
   const repository = {
     create: jest.fn(),
     save: jest.fn(),
+    findOne: jest.fn(),
   };
 
   const httpService = {

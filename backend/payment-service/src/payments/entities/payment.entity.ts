@@ -1,5 +1,6 @@
 import {
     Entity,
+    Index,
     PrimaryGeneratedColumn,
     Column,
     CreateDateColumn,
@@ -14,6 +15,7 @@ export enum PaymentStatus {
 }
 
 @Entity('payments')
+@Index('UQ_payments_order_id', ['orderId'], { unique: true })
 export class Payment {
     @PrimaryGeneratedColumn('uuid')
     id: string;

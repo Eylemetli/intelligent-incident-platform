@@ -2,6 +2,7 @@ import {
     Injectable,
     BadRequestException,
     ConflictException,
+    ForbiddenException,
     NotFoundException,
     ServiceUnavailableException,
 } from '@nestjs/common';
@@ -10,7 +11,7 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
-import { Repository } from 'typeorm';
+import { QueryFailedError, Repository } from 'typeorm';
 
 import { Payment, PaymentStatus } from './entities/payment.entity';
 import { CreatePaymentDto } from './dto/create-payment.dto';
@@ -24,12 +25,29 @@ export class PaymentsService {
         private readonly httpService: HttpService,
         private readonly configService: ConfigService,
     ) { }
-
     async create(
         dto: CreatePaymentDto,
         userId: string,
         token: string,
     ): Promise<Payment> {
+        const amount = dto.amount.toFixed(2);
+        const currency = dto.currency?.toUpperCase() ?? 'TRY';
+
+        // Önce aynı sipariş için ödeme var mı?
+        const existingPayment = await this.paymentRepository.findOne({
+            where: { orderId: dto.orderId },
+        });
+
+        if (existingPayment) {
+            return this.resolveExistingPayment(
+                existingPayment,
+                userId,
+                amount,
+                currency,
+            );
+        }
+
+        // Siparişi Order Service üzerinden doğrula
         const order = await this.getOrder(dto.orderId, token);
 
         if (order.userId !== userId) {
@@ -41,9 +59,6 @@ export class PaymentsService {
                 'Yalnızca onaylanmış siparişler için ödeme oluşturulabilir',
             );
         }
-
-        const amount = dto.amount.toFixed(2);
-        const currency = dto.currency?.toUpperCase() ?? 'TRY';
 
         if (
             Number(order.totalAmount) !== Number(amount) ||
@@ -63,7 +78,56 @@ export class PaymentsService {
             failureReason: null,
         });
 
-        return this.paymentRepository.save(payment);
+        try {
+            return await this.paymentRepository.save(payment);
+        } catch (error: unknown) {
+            // PostgreSQL unique constraint violation: 23505
+            if (
+                error instanceof QueryFailedError &&
+                (error.driverError as { code?: string })?.code === '23505'
+            ) {
+                const savedPayment = await this.paymentRepository.findOne({
+                    where: { orderId: dto.orderId },
+                });
+
+                if (savedPayment) {
+                    return this.resolveExistingPayment(
+                        savedPayment,
+                        userId,
+                        amount,
+                        currency,
+                    );
+                }
+
+                throw new ConflictException(
+                    'Ödeme eşzamanlı olarak oluşturuluyor, tekrar deneyin',
+                );
+            }
+
+            throw error;
+        }
+    }
+
+    private resolveExistingPayment(
+        payment: Payment,
+        userId: string,
+        amount: string,
+        currency: string,
+    ): Payment {
+        if (payment.userId !== userId) {
+            throw new NotFoundException('Ödeme bulunamadı');
+        }
+
+        if (
+            payment.amount !== amount ||
+            payment.currency !== currency
+        ) {
+            throw new ConflictException(
+                'Bu sipariş için farklı bilgilerle ödeme kaydı mevcut',
+            );
+        }
+
+        return payment;
     }
 
     private async getOrder(
