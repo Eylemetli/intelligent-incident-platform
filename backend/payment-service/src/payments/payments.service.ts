@@ -12,7 +12,8 @@ import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
 import { QueryFailedError, Repository } from 'typeorm';
-
+import { Logger } from '@nestjs/common';
+import { IncidentClientService } from '../incident-client/incident-client.service';
 import { Payment, PaymentStatus } from './entities/payment.entity';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { OrderResponse } from './interfaces/order-response.interface';
@@ -23,11 +24,13 @@ import {
 
 @Injectable()
 export class PaymentsService {
+    private readonly logger = new Logger(PaymentsService.name);
     constructor(
         @InjectRepository(Payment)
         private readonly paymentRepository: Repository<Payment>,
         private readonly httpService: HttpService,
         private readonly configService: ConfigService,
+        private readonly incidentClientService: IncidentClientService,
     ) { }
     async create(
         dto: CreatePaymentDto,
@@ -211,6 +214,25 @@ export class PaymentsService {
 
             if (!updatedPayment) {
                 throw new NotFoundException('Ödeme bulunamadı');
+            }
+
+            if (updatedPayment.status === PaymentStatus.FAILED) {
+                try {
+                    await this.incidentClientService.createIncident({
+                        title: 'Ödeme işlemi başarısız',
+                        description:
+                            `Payment ID: ${updatedPayment.id}. ` +
+                            `Hata: ${updatedPayment.failureReason ?? 'Bilinmeyen hata'}`,
+                        sourceService: 'payment-service',
+                        severity: 'high',
+                        errorCode: 'PAYMENT_FAILED',
+                    });
+                } catch (error: unknown) {
+                    this.logger.error(
+                        'Ödeme başarısız oldu ancak Incident Service bildirimi gönderilemedi',
+                        error instanceof Error ? error.stack : String(error),
+                    );
+                }
             }
 
             return updatedPayment;

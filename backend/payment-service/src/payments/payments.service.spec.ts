@@ -13,6 +13,8 @@ import {
 import { AxiosError, AxiosHeaders } from 'axios';
 import { of, throwError } from 'rxjs';
 
+import { IncidentClientService } from '../incident-client/incident-client.service';
+
 import { PaymentsService } from './payments.service';
 import { Payment, PaymentStatus } from './entities/payment.entity';
 
@@ -76,9 +78,15 @@ describe('PaymentsService', () => {
     );
   };
 
+  const incidentClientService = {
+    createIncident: jest.fn(),
+  };
+
 
   beforeEach(async () => {
     jest.resetAllMocks();
+
+    incidentClientService.createIncident.mockResolvedValue(undefined);
 
     repository.createQueryBuilder.mockReturnValue(queryBuilder);
     repository.findOne.mockResolvedValue(null);
@@ -103,6 +111,10 @@ describe('PaymentsService', () => {
           {
             provide: ConfigService,
             useValue: configService,
+          },
+          {
+            provide: IncidentClientService,
+            useValue: incidentClientService,
           },
         ],
       }).compile();
