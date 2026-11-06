@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { PaymentsModule } from './payments/payments.module';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
@@ -23,7 +24,7 @@ import { PaymentsModule } from './payments/payments.module';
         synchronize: false,
       }),
     }),
-
+    ScheduleModule.forRoot(),
     PaymentsModule,
   ],
   controllers: [AppController],

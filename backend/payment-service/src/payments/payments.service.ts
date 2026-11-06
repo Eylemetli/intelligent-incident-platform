@@ -11,9 +11,11 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
-import { QueryFailedError, Repository } from 'typeorm';
-import { Logger } from '@nestjs/common';
-import { IncidentClientService } from '../incident-client/incident-client.service';
+import { DataSource, QueryFailedError, Repository } from 'typeorm';
+import {
+    OutboxEvent,
+    OutboxStatus,
+} from '../outbox/entities/outbox-event.entity';
 import { Payment, PaymentStatus } from './entities/payment.entity';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { OrderResponse } from './interfaces/order-response.interface';
@@ -24,13 +26,13 @@ import {
 
 @Injectable()
 export class PaymentsService {
-    private readonly logger = new Logger(PaymentsService.name);
+
     constructor(
         @InjectRepository(Payment)
         private readonly paymentRepository: Repository<Payment>,
         private readonly httpService: HttpService,
         private readonly configService: ConfigService,
-        private readonly incidentClientService: IncidentClientService,
+        private readonly dataSource: DataSource,
     ) { }
     async create(
         dto: CreatePaymentDto,
@@ -190,22 +192,41 @@ export class PaymentsService {
                 ? dto.failureReason!
                 : null;
 
-        const result = await this.paymentRepository
-            .createQueryBuilder()
-            .update(Payment)
-            .set({
-                status,
-                failureReason,
-            })
-            .where('id = :paymentId', { paymentId })
-            .andWhere('user_id = :userId', { userId })
-            .andWhere('status = :pending', {
-                pending: PaymentStatus.PENDING,
-            })
-            .execute();
+        return this.dataSource.transaction(async (manager) => {
+            // 1. Ödemeyi yalnızca pending durumundaysa güncelle
+            const result = await manager
+                .createQueryBuilder()
+                .update(Payment)
+                .set({
+                    status,
+                    failureReason,
+                })
+                .where('id = :paymentId', { paymentId })
+                .andWhere('user_id = :userId', { userId })
+                .andWhere('status = :pending', {
+                    pending: PaymentStatus.PENDING,
+                })
+                .execute();
 
-        if (result.affected === 1) {
-            const updatedPayment = await this.paymentRepository.findOne({
+            if (result.affected !== 1) {
+                const existingPayment = await manager.findOne(Payment, {
+                    where: {
+                        id: paymentId,
+                        userId,
+                    },
+                });
+
+                if (!existingPayment) {
+                    throw new NotFoundException('Ödeme bulunamadı');
+                }
+
+                throw new ConflictException(
+                    'Yalnızca bekleyen ödemeler işlenebilir',
+                );
+            }
+
+            // 2. Güncellenmiş ödemeyi getir
+            const updatedPayment = await manager.findOne(Payment, {
                 where: {
                     id: paymentId,
                     userId,
@@ -216,9 +237,12 @@ export class PaymentsService {
                 throw new NotFoundException('Ödeme bulunamadı');
             }
 
+            // 3. Ödeme başarısızsa Outbox kaydı oluştur
             if (updatedPayment.status === PaymentStatus.FAILED) {
-                try {
-                    await this.incidentClientService.createIncident({
+                const outboxEvent = manager.create(OutboxEvent, {
+                    eventType: 'payment.failed',
+                    aggregateId: updatedPayment.id,
+                    payload: {
                         title: 'Ödeme işlemi başarısız',
                         description:
                             `Payment ID: ${updatedPayment.id}. ` +
@@ -226,31 +250,18 @@ export class PaymentsService {
                         sourceService: 'payment-service',
                         severity: 'high',
                         errorCode: 'PAYMENT_FAILED',
-                    });
-                } catch (error: unknown) {
-                    this.logger.error(
-                        'Ödeme başarısız oldu ancak Incident Service bildirimi gönderilemedi',
-                        error instanceof Error ? error.stack : String(error),
-                    );
-                }
+                    },
+                    status: OutboxStatus.PENDING,
+                    attempts: 0,
+                    nextAttemptAt: new Date(),
+                    sentAt: null,
+                });
+
+                await manager.save(OutboxEvent, outboxEvent);
             }
 
+            // Transaction başarıyla tamamlanınca commit edilir
             return updatedPayment;
-        }
-
-        const existingPayment = await this.paymentRepository.findOne({
-            where: {
-                id: paymentId,
-                userId,
-            },
         });
-
-        if (!existingPayment) {
-            throw new NotFoundException('Ödeme bulunamadı');
-        }
-
-        throw new ConflictException(
-            'Yalnızca bekleyen ödemeler işlenebilir',
-        );
     }
 }

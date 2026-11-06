@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 
 export interface CreateIncidentPayload {
+    eventId: string;
     title: string;
     description: string;
     sourceService: string;
@@ -23,7 +24,9 @@ export class IncidentClientService {
         private readonly configService: ConfigService,
     ) { }
 
-    async createIncident(payload: CreateIncidentPayload): Promise<void> {
+    async createIncident(
+        payload: CreateIncidentPayload,
+    ): Promise<void> {
         const baseUrl =
             this.configService.getOrThrow<string>('INCIDENT_SERVICE_URL');
 

@@ -5,7 +5,6 @@ import {
 } from '@nestjs/common';
 
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 
 import {
     Incident,
@@ -15,6 +14,7 @@ import {
 
 import { CreateIncidentDto } from './dto/create-incident.dto';
 import { UpdateIncidentStatusDto } from './dto/update-incident-status.dto';
+import { QueryFailedError, Repository } from 'typeorm';
 
 @Injectable()
 export class IncidentsService {
@@ -25,6 +25,17 @@ export class IncidentsService {
 
     // 1. Yeni incident oluştur
     async create(dto: CreateIncidentDto): Promise<Incident> {
+        // Aynı event daha önce işlendi mi?
+        if (dto.eventId) {
+            const existingIncident = await this.incidentRepository.findOne({
+                where: { eventId: dto.eventId },
+            });
+
+            if (existingIncident) {
+                return existingIncident;
+            }
+        }
+
         const incident = this.incidentRepository.create({
             title: dto.title,
             description: dto.description,
@@ -32,10 +43,30 @@ export class IncidentsService {
             severity: dto.severity ?? IncidentSeverity.MEDIUM,
             status: IncidentStatus.OPEN,
             errorCode: dto.errorCode ?? null,
+            eventId: dto.eventId ?? null,
             resolvedAt: null,
         });
 
-        return this.incidentRepository.save(incident);
+        try {
+            return await this.incidentRepository.save(incident);
+        } catch (error: unknown) {
+            // Eşzamanlı isteklerde PostgreSQL unique constraint
+            if (
+                dto.eventId &&
+                error instanceof QueryFailedError &&
+                (error.driverError as { code?: string })?.code === '23505'
+            ) {
+                const existingIncident = await this.incidentRepository.findOne({
+                    where: { eventId: dto.eventId },
+                });
+
+                if (existingIncident) {
+                    return existingIncident;
+                }
+            }
+
+            throw error;
+        }
     }
 
     // 2. Tüm incident kayıtlarını listele

@@ -33,6 +33,7 @@ describe('IncidentsService', () => {
             severity: IncidentSeverity.HIGH,
             status: IncidentStatus.OPEN,
             errorCode: 'PAYMENT_FAILED',
+            eventId: null,
             resolvedAt: null,
             createdAt: new Date(),
             updatedAt: new Date(),
@@ -83,6 +84,7 @@ describe('IncidentsService', () => {
                 status: IncidentStatus.OPEN,
                 errorCode: 'PAYMENT_FAILED',
                 resolvedAt: null,
+                eventId: null,
             });
 
             expect(repository.save).toHaveBeenCalledWith(
@@ -114,8 +116,53 @@ describe('IncidentsService', () => {
                     severity: IncidentSeverity.MEDIUM,
                     errorCode: null,
                     status: IncidentStatus.OPEN,
+                    eventId: null,
                 }),
             );
+        });
+        it('aynı eventId tekrar gelirse mevcut incident dönmeli', async () => {
+            const eventId = '550e8400-e29b-41d4-a716-446655440000';
+
+            const existingIncident = makeIncident({
+                eventId,
+            });
+
+            repository.findOne.mockResolvedValue(existingIncident);
+
+            const result = await service.create({
+                eventId,
+                title: 'Ödeme hatası',
+                description: 'Ödeme başarısız',
+                sourceService: 'payment-service',
+                severity: IncidentSeverity.HIGH,
+            });
+
+            expect(result).toEqual(existingIncident);
+            expect(repository.create).not.toHaveBeenCalled();
+            expect(repository.save).not.toHaveBeenCalled();
+        });
+
+        it('yeni eventId ile incident oluşturmalı', async () => {
+            const eventId = '550e8400-e29b-41d4-a716-446655440000';
+
+            const incident = makeIncident({
+                eventId,
+            });
+
+            repository.findOne.mockResolvedValue(null);
+            repository.create.mockReturnValue(incident);
+            repository.save.mockResolvedValue(incident);
+
+            const result = await service.create({
+                eventId,
+                title: 'Ödeme hatası',
+                description: 'Ödeme başarısız',
+                sourceService: 'payment-service',
+                severity: IncidentSeverity.HIGH,
+            });
+
+            expect(result.eventId).toBe(eventId);
+            expect(repository.save).toHaveBeenCalledTimes(1);
         });
     });
 

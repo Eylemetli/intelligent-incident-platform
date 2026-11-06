@@ -5,7 +5,7 @@ import {
     IsString,
     MaxLength,
 } from 'class-validator';
-
+import { IsUUID } from 'class-validator';
 import { IncidentSeverity } from '../entities/incident.entity';
 
 export class CreateIncidentDto {
@@ -31,4 +31,8 @@ export class CreateIncidentDto {
     @IsString()
     @MaxLength(100)
     errorCode?: string;
+
+    @IsOptional()
+    @IsUUID('4')
+    eventId?: string;
 }

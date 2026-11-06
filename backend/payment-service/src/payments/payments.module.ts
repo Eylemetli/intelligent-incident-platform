@@ -6,6 +6,7 @@ import { Payment } from './entities/payment.entity';
 import { AuthModule } from '../auth/auth.module';
 import { HttpModule } from '@nestjs/axios';
 import { IncidentClientModule } from '../incident-client/incident-client.module';
+import { OutboxModule } from '../outbox/outbox.module';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Payment]), AuthModule,
@@ -13,6 +14,7 @@ import { IncidentClientModule } from '../incident-client/incident-client.module'
     timeout: 5000,
     maxRedirects: 0,
   }),
+    OutboxModule,
     IncidentClientModule,],
   controllers: [PaymentsController],
   providers: [PaymentsService],

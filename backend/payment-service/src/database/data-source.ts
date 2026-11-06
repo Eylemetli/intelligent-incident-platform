@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import { DataSource } from 'typeorm';
+
 import { Payment } from '../payments/entities/payment.entity';
+import { OutboxEvent } from '../outbox/entities/outbox-event.entity';
 
 export default new DataSource({
     type: 'postgres',
@@ -9,7 +11,7 @@ export default new DataSource({
     username: process.env.DB_USERNAME,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_DATABASE,
-    entities: [Payment],
+    entities: [Payment, OutboxEvent],
     migrations: ['src/database/migrations/*.ts'],
     synchronize: false,
 });

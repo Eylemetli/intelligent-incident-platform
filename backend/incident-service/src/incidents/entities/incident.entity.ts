@@ -6,6 +6,8 @@ import {
     UpdateDateColumn,
 } from 'typeorm';
 
+import { Index } from 'typeorm';
+
 export enum IncidentSeverity {
     LOW = 'low',
     MEDIUM = 'medium',
@@ -71,4 +73,12 @@ export class Incident {
         nullable: true,
     })
     resolvedAt: Date | null;
+
+    @Index('uq_incidents_event_id', { unique: true })
+    @Column({
+        name: 'event_id',
+        type: 'uuid',
+        nullable: true,
+    })
+    eventId: string | null;
 }

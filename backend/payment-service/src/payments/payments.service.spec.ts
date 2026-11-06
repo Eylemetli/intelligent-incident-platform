@@ -17,6 +17,7 @@ import { IncidentClientService } from '../incident-client/incident-client.servic
 
 import { PaymentsService } from './payments.service';
 import { Payment, PaymentStatus } from './entities/payment.entity';
+import { DataSource } from 'typeorm';
 
 describe('PaymentsService', () => {
   let service: PaymentsService;
@@ -82,9 +83,31 @@ describe('PaymentsService', () => {
     createIncident: jest.fn(),
   };
 
+  const manager = {
+    createQueryBuilder: jest.fn(),
+    findOne: jest.fn(),
+    create: jest.fn(),
+    save: jest.fn(),
+  };
+
+  const dataSource = {
+    transaction: jest.fn(),
+  };
+
 
   beforeEach(async () => {
     jest.resetAllMocks();
+
+    // Transaction callback'ini çalıştır
+    dataSource.transaction.mockImplementation(
+      async (callback) => callback(manager),
+    );
+
+    // Manager mockları
+    manager.createQueryBuilder.mockReturnValue(queryBuilder);
+    manager.findOne.mockResolvedValue(null);
+    manager.create.mockImplementation((_entity, data) => data);
+    manager.save.mockImplementation(async (_entity, data) => data);
 
     incidentClientService.createIncident.mockResolvedValue(undefined);
 
@@ -96,34 +119,35 @@ describe('PaymentsService', () => {
     queryBuilder.where.mockReturnThis();
     queryBuilder.andWhere.mockReturnThis();
 
-    const module: TestingModule =
-      await Test.createTestingModule({
-        providers: [
-          PaymentsService,
-          {
-            provide: getRepositoryToken(Payment),
-            useValue: repository,
-          },
-          {
-            provide: HttpService,
-            useValue: httpService,
-          },
-          {
-            provide: ConfigService,
-            useValue: configService,
-          },
-          {
-            provide: IncidentClientService,
-            useValue: incidentClientService,
-          },
-        ],
-      }).compile();
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        PaymentsService,
+        {
+          provide: getRepositoryToken(Payment),
+          useValue: repository,
+        },
+        {
+          provide: HttpService,
+          useValue: httpService,
+        },
+        {
+          provide: ConfigService,
+          useValue: configService,
+        },
+        {
+          provide: DataSource,
+          useValue: dataSource,
+        },
+        {
+          provide: IncidentClientService,
+          useValue: incidentClientService,
+        },
+      ],
+    }).compile();
 
     service = module.get<PaymentsService>(PaymentsService);
 
-    configService.getOrThrow.mockReturnValue(
-      'http://localhost:3002',
-    );
+    configService.getOrThrow.mockReturnValue('http://localhost:3002');
 
     repository.create.mockReturnValue(payment);
     repository.save.mockResolvedValue(payment);
@@ -259,7 +283,7 @@ describe('PaymentsService', () => {
       };
 
       queryBuilder.execute.mockResolvedValue({ affected: 1 });
-      repository.findOne.mockResolvedValue(updatedPayment);
+      manager.findOne.mockResolvedValue(updatedPayment);
 
       const result = await service.process(paymentId, userId, {
         result: PaymentProcessResult.SUCCESS,
@@ -267,12 +291,13 @@ describe('PaymentsService', () => {
 
       expect(result.status).toBe(PaymentStatus.SUCCESS);
       expect(queryBuilder.execute).toHaveBeenCalled();
+      expect(manager.findOne).toHaveBeenCalled();
     });
 
     it('zaten sonuçlandırılmış ödemeyi tekrar işlememeli', async () => {
       queryBuilder.execute.mockResolvedValue({ affected: 0 });
 
-      repository.findOne.mockResolvedValue({
+      manager.findOne.mockResolvedValue({
         ...payment,
         id: paymentId,
         status: PaymentStatus.SUCCESS,
@@ -288,7 +313,7 @@ describe('PaymentsService', () => {
 
     it('başka kullanıcıya ait ödemeyi işlememeli', async () => {
       queryBuilder.execute.mockResolvedValue({ affected: 0 });
-      repository.findOne.mockResolvedValue(null);
+      manager.findOne.mockResolvedValue(null);
 
       await expect(
         service.process(paymentId, userId, {
