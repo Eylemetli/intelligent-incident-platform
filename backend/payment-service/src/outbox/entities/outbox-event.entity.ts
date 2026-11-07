@@ -72,4 +72,19 @@ export class OutboxEvent {
         nullable: true,
     })
     sentAt: Date | null;
+
+    @Column({
+        name: 'locked_at',
+        type: 'timestamp',
+        nullable: true,
+    })
+    lockedAt: Date | null;
+
+    @Column({
+        name: 'locked_by',
+        type: 'varchar',
+        length: 150,
+        nullable: true,
+    })
+    lockedBy: string | null;
 }

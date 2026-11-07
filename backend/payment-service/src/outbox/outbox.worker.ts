@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
+import { randomUUID } from 'crypto';
 
 import {
     OutboxEvent,
@@ -17,6 +18,7 @@ import {
 @Injectable()
 export class OutboxWorker {
     private readonly logger = new Logger(OutboxWorker.name);
+    private readonly workerId = randomUUID();
     private running = false;
 
     constructor(
@@ -25,6 +27,21 @@ export class OutboxWorker {
         private readonly incidentClient: IncidentClientService,
         private readonly dataSource: DataSource,
     ) { }
+    //Bu metot yalnızca ilgili worker'ın sahip olduğu kaydın lease süresini yeniler.
+    private async renewLease(eventId: string): Promise<boolean> {
+        const result = await this.outboxRepository.update(
+            {
+                id: eventId,
+                status: OutboxStatus.PROCESSING,
+                lockedBy: this.workerId,
+            },
+            {
+                lockedAt: new Date(),
+            },
+        );
+
+        return result.affected === 1;
+    }
 
     @Cron(CronExpression.EVERY_10_SECONDS)
     async processPendingEvents(): Promise<void> {
@@ -41,11 +58,13 @@ export class OutboxWorker {
                 .set({
                     status: OutboxStatus.PENDING,
                     nextAttemptAt: new Date(),
+                    lockedAt: null,
+                    lockedBy: null,
                 })
                 .where('status = :status', {
                     status: OutboxStatus.PROCESSING,
                 })
-                .andWhere('next_attempt_at <= :timeout', {
+                .andWhere('locked_at <= :timeout', {
                     timeout: leaseTimeout,
                 })
                 .execute();
@@ -68,14 +87,17 @@ export class OutboxWorker {
                             now: new Date(),
                         })
                         .orderBy('event.createdAt', 'ASC')
-                        .take(20)
+                        .take(5)
                         .setLock('pessimistic_write')
                         .setOnLocked('skip_locked')
                         .getMany();
 
+                    const lockedAt = new Date();
+
                     for (const event of pendingEvents) {
                         event.status = OutboxStatus.PROCESSING;
-                        event.nextAttemptAt = new Date();
+                        event.lockedAt = lockedAt;
+                        event.lockedBy = this.workerId;
                     }
 
                     await manager.save(OutboxEvent, pendingEvents);
@@ -86,6 +108,15 @@ export class OutboxWorker {
 
             for (const event of events) {
                 try {
+                    const hasLease = await this.renewLease(event.id);
+
+                    if (!hasLease) {
+                        this.logger.warn(
+                            `Outbox sahipliği kaybedildi: ${event.id}`,
+                        );
+                        continue;
+                    }
+
                     await this.incidentClient.createIncident({
                         ...(event.payload as unknown as Omit<
                             CreateIncidentPayload,
@@ -94,16 +125,30 @@ export class OutboxWorker {
                         eventId: event.id,
                     });
 
-                    await this.outboxRepository.update(
+
+                    const updateResult = await this.outboxRepository.update(
                         {
                             id: event.id,
                             status: OutboxStatus.PROCESSING,
+                            lockedBy: this.workerId,
                         },
                         {
                             status: OutboxStatus.SENT,
                             sentAt: new Date(),
+                            lockedAt: null,
+                            lockedBy: null,
                         },
                     );
+
+                    if (updateResult.affected !== 1) {
+                        this.logger.warn(
+                            `Outbox gönderildi ancak sahiplik kaybedildi: ${event.id}`,
+                        );
+                        continue;
+                    }
+
+                    this.logger.log(`Outbox gönderildi: ${event.id}`);
+
 
                     this.logger.log(`Outbox gönderildi: ${event.id}`);
                 } catch (error: unknown) {
@@ -114,10 +159,11 @@ export class OutboxWorker {
                         300,
                     );
 
-                    await this.outboxRepository.update(
+                    const retryResult = await this.outboxRepository.update(
                         {
                             id: event.id,
                             status: OutboxStatus.PROCESSING,
+                            lockedBy: this.workerId,
                         },
                         {
                             status: OutboxStatus.PENDING,
@@ -125,8 +171,16 @@ export class OutboxWorker {
                             nextAttemptAt: new Date(
                                 Date.now() + delaySeconds * 1000,
                             ),
+                            lockedAt: null,
+                            lockedBy: null,
                         },
                     );
+                    if (retryResult.affected !== 1) {
+                        this.logger.warn(
+                            `Outbox retry güncellenemedi, sahiplik kaybedildi: ${event.id}`,
+                        );
+                        continue;
+                    }
 
                     this.logger.warn(
                         `Outbox gönderilemedi: ${event.id}, deneme=${attempts}`,

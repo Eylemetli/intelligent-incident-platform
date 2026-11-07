@@ -2,7 +2,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-
+import { Logger } from '@nestjs/common';
 import { OutboxWorker } from './outbox.worker';
 import {
     OutboxEvent,
@@ -36,6 +36,8 @@ describe('OutboxWorker', () => {
             nextAttemptAt: new Date(),
             createdAt: new Date(),
             sentAt: null,
+            lockedAt: null,
+            lockedBy: null,
             ...overrides,
         }) as OutboxEvent;
 
@@ -153,14 +155,19 @@ describe('OutboxWorker', () => {
             {
                 id: event.id,
                 status: OutboxStatus.PROCESSING,
+                lockedBy: expect.any(String),
             },
             expect.objectContaining({
                 status: OutboxStatus.SENT,
                 sentAt: expect.any(Date),
+                lockedAt: null,
+                lockedBy: null,
             }),
         );
 
         expect(event.status).toBe(OutboxStatus.PROCESSING);
+        expect(event.lockedAt).toBeInstanceOf(Date);
+        expect(event.lockedBy).toEqual(expect.any(String));
     });
 
     it('HTTP isteği başarısızsa retry için PENDING yapmalı', async () => {
@@ -181,15 +188,18 @@ describe('OutboxWorker', () => {
             {
                 id: event.id,
                 status: OutboxStatus.PROCESSING,
+                lockedBy: expect.any(String),
             },
             expect.objectContaining({
                 status: OutboxStatus.PENDING,
                 attempts: 1,
                 nextAttemptAt: expect.any(Date),
+                lockedAt: null,
+                lockedBy: null,
             }),
         );
 
-        const update = repository.update.mock.calls[0][1] as {
+        const update = repository.update.mock.calls[1][1] as {
             nextAttemptAt: Date;
         };
 
@@ -212,11 +222,13 @@ describe('OutboxWorker', () => {
             expect.objectContaining({
                 status: OutboxStatus.PENDING,
                 nextAttemptAt: expect.any(Date),
+                lockedAt: null,
+                lockedBy: null,
             }),
         );
 
         expect(recoveryQueryBuilder.andWhere).toHaveBeenCalledWith(
-            'next_attempt_at <= :timeout',
+            'locked_at <= :timeout',
             expect.objectContaining({
                 timeout: expect.any(Date),
             }),
@@ -266,7 +278,7 @@ describe('OutboxWorker', () => {
             'skip_locked',
         );
 
-        expect(claimQueryBuilder.take).toHaveBeenCalledWith(20);
+        expect(claimQueryBuilder.take).toHaveBeenCalledWith(5);
     });
 
     it('seçilen kayıtları PROCESSING durumuna almalı', async () => {
@@ -277,11 +289,107 @@ describe('OutboxWorker', () => {
 
         expect(manager.save).toHaveBeenCalledWith(
             OutboxEvent,
-            [expect.objectContaining({
+            [
+                expect.objectContaining({
+                    id: event.id,
+                    status: OutboxStatus.PROCESSING,
+                    lockedAt: expect.any(Date),
+                    lockedBy: expect.any(String),
+                }),
+            ],
+        );
+    });
+    it('worker yalnızca kendi sahiplendiği kaydı güncellemeli', async () => {
+        const event = makeEvent();
+
+        claimQueryBuilder.getMany.mockResolvedValue([event]);
+
+        await worker.processPendingEvents();
+
+        expect(event.lockedBy).toEqual(expect.any(String));
+
+        expect(repository.update).toHaveBeenCalledWith(
+            expect.objectContaining({
                 id: event.id,
                 status: OutboxStatus.PROCESSING,
-                nextAttemptAt: expect.any(Date),
-            })],
+                lockedBy: event.lockedBy,
+            }),
+            expect.objectContaining({
+                status: OutboxStatus.SENT,
+                lockedAt: null,
+                lockedBy: null,
+            }),
         );
+    });
+
+    it('lease sahipliği kaybedilirse incident göndermemeli', async () => {
+        const event = makeEvent();
+
+        claimQueryBuilder.getMany.mockResolvedValue([event]);
+
+        // Lease yenilemesi başarısız: kayıt artık bu worker'a ait değil.
+        repository.update.mockResolvedValueOnce({
+            affected: 0,
+        });
+
+        await worker.processPendingEvents();
+
+        expect(incidentClient.createIncident).not.toHaveBeenCalled();
+
+        expect(repository.update).toHaveBeenCalledTimes(1);
+
+        expect(repository.update).toHaveBeenCalledWith(
+            {
+                id: event.id,
+                status: OutboxStatus.PROCESSING,
+                lockedBy: event.lockedBy,
+            },
+            {
+                lockedAt: expect.any(Date),
+            },
+        );
+    });
+
+    it('gönderim sonrası sahiplik kaybedilirse başarı logu yerine uyarı vermeli', async () => {
+        const event = makeEvent();
+
+        claimQueryBuilder.getMany.mockResolvedValue([event]);
+
+        // İlk update: lease yenileme başarılı.
+        repository.update.mockResolvedValueOnce({
+            affected: 1,
+        });
+
+        // İkinci update: SENT güncellemesi sahiplik kaybı nedeniyle başarısız.
+        repository.update.mockResolvedValueOnce({
+            affected: 0,
+        });
+
+        const logSpy = jest
+            .spyOn(Logger.prototype, 'log')
+            .mockImplementation();
+
+        const warnSpy = jest
+            .spyOn(Logger.prototype, 'warn')
+            .mockImplementation();
+
+        try {
+            await worker.processPendingEvents();
+
+            expect(incidentClient.createIncident).toHaveBeenCalledTimes(1);
+
+            expect(repository.update).toHaveBeenCalledTimes(2);
+
+            expect(logSpy).not.toHaveBeenCalledWith(
+                `Outbox gönderildi: ${event.id}`,
+            );
+
+            expect(warnSpy).toHaveBeenCalledWith(
+                `Outbox gönderildi ancak sahiplik kaybedildi: ${event.id}`,
+            );
+        } finally {
+            logSpy.mockRestore();
+            warnSpy.mockRestore();
+        }
     });
 });
